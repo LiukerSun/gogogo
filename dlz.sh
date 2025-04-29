@@ -100,9 +100,11 @@ show_menu() {
     echo -e "${GREEN}3.${NC} 查看Docker状态"
     echo -e "${GREEN}4.${NC} 清理Docker系统"
     echo -e "${GREEN}5.${NC} 安装WordPress独立站"
+    echo -e "${GREEN}6.${NC} 查看独立站信息"
+    echo -e "${GREEN}7.${NC} 证书配置与管理"
     echo -e "${GREEN}0.${NC} 退出"
     echo ""
-    echo -n "请输入选项 [0-5]: "
+    echo -n "请输入选项 [0-7]: "
     
     # 使用read -n 1获取单个字符并立即处理
     read -n 1 choice
@@ -114,6 +116,8 @@ show_menu() {
         3) show_docker_status ;;
         4) clean_docker ;;
         5) install_wordpress ;;
+        6) show_wordpress_info ;;
+        7) manage_certificate ;;
         0) exit 0 ;;
         *) log_error "无效选项，请重新选择" && show_menu ;;
     esac
@@ -417,6 +421,136 @@ install_wordpress() {
         fi
     fi
     
+    # 检查Nginx是否已安装
+    if ! which nginx &> /dev/null; then
+        log_info "Nginx未安装，开始安装Nginx..."
+        apt-get update
+        apt-get install -y nginx
+        
+        if [ $? -ne 0 ]; then
+            log_error "Nginx安装失败"
+            show_menu
+            return
+        fi
+        
+        # 创建Nginx配置目录
+        mkdir -p /etc/nginx/conf.d
+        mkdir -p /var/www/acme-challenge
+        
+        # 配置Nginx默认站点
+        cat > /etc/nginx/conf.d/default.conf << EOF
+server {
+    listen 80;
+    server_name _;
+
+    location / {
+        root   /usr/share/nginx/html;
+        index  index.html index.htm;
+    }
+
+    # 用于acme.sh验证
+    location /.well-known/acme-challenge/ {
+        root /var/www/acme-challenge;
+        try_files \$uri =404;
+    }
+}
+EOF
+        
+        # 启动Nginx服务
+        systemctl start nginx
+        systemctl enable nginx
+        log_info "Nginx安装完成并已启动"
+    fi
+    
+    # 检查acme.sh是否已安装
+    if [ ! -f "/root/.acme.sh/acme.sh" ]; then
+        log_info "acme.sh未安装，开始安装acme.sh..."
+        
+        # 安装依赖
+        apt-get install -y curl socat
+        
+        # 获取用户邮箱并验证
+        while true; do
+            echo -n "请输入您的有效邮箱地址 (用于Let's Encrypt通知): "
+            read USER_EMAIL
+            
+            # 验证邮箱格式
+            if [[ ! "$USER_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+                log_error "邮箱格式无效，请输入正确的邮箱地址"
+                continue
+            fi
+            
+            # 验证邮箱域名
+            EMAIL_DOMAIN=$(echo "$USER_EMAIL" | cut -d'@' -f2)
+            if [[ "$EMAIL_DOMAIN" == "example.com" || "$EMAIL_DOMAIN" == "localhost" ]]; then
+                log_error "不允许使用example.com或localhost作为邮箱域名"
+                continue
+            fi
+            
+            # 确认邮箱
+            echo -n "确认使用邮箱 $USER_EMAIL? [Y/n]: "
+            read -n 1 confirm
+            echo ""
+            
+            if [[ ! "$confirm" =~ ^[Nn]$ ]]; then
+                break
+            fi
+        done
+        
+        # 获取Cloudflare API信息
+        echo -e "${BLUE}配置Cloudflare API信息${NC}"
+        echo "=================================="
+        echo "您需要提供Cloudflare的API信息以进行DNS验证"
+        echo "1. 登录Cloudflare控制台"
+        echo "2. 进入'我的个人资料' -> 'API令牌'"
+        echo "3. 创建新的API令牌，选择'编辑区域DNS'权限"
+        echo ""
+        
+        while true; do
+            echo -n "请输入Cloudflare API令牌: "
+            read CF_API_TOKEN
+            
+            if [ -z "$CF_API_TOKEN" ]; then
+                log_error "API令牌不能为空"
+                continue
+            fi
+            
+            # 验证API令牌格式
+            if [[ ! "$CF_API_TOKEN" =~ ^[a-zA-Z0-9]{40}$ ]]; then
+                log_error "API令牌格式无效，请检查是否正确"
+                continue
+            fi
+            
+            # 确认API令牌
+            echo -n "确认使用此API令牌? [Y/n]: "
+            read -n 1 confirm
+            echo ""
+            
+            if [[ ! "$confirm" =~ ^[Nn]$ ]]; then
+                break
+            fi
+        done
+        
+        # 创建配置目录
+        # 安装acme.sh
+        log_info "正在安装acme.sh..."
+        curl https://get.acme.sh | sh -s email=${USER_EMAIL}
+        
+        if [ $? -ne 0 ]; then
+            log_error "acme.sh安装失败"
+            show_menu
+            return
+        fi
+        
+        # 设置默认CA
+        /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+        
+        # 设置自动更新
+        /root/.acme.sh/acme.sh --upgrade --auto-upgrade
+        
+        log_info "acme.sh安装完成"
+    fi
+    
     # 创建工作目录
     SITE_DIR="./wordpress_site"
     mkdir -p $SITE_DIR
@@ -532,9 +666,9 @@ install_wordpress() {
         log_info "随机生成的WordPress管理员密码: $WP_ADMIN_PASSWORD"
     fi
     
-    echo -n "WordPress管理员邮箱: "
+    echo -n "WordPress管理员邮箱: (默认: liukersun@gmail.com) "
     read WP_ADMIN_EMAIL
-    WP_ADMIN_EMAIL=${WP_ADMIN_EMAIL:-admin@${SITE_DOMAIN}}
+    WP_ADMIN_EMAIL=${WP_ADMIN_EMAIL:-liukersun@gmail.com}
     
     echo -n "WordPress站点标题 (默认: My WordPress Site): "
     read WP_TITLE
@@ -770,231 +904,57 @@ EOF
     # 运行WP-CLI安装命令
     log_info "配置WordPress站点..."
     
-    # 创建WP-CLI配置文件
+    # 创建wp-cli.yml配置文件
+    log_info "创建wp-cli配置..."
     cat > wp-cli.yml << EOF
 path: /var/www/html
-url: ${SITE_DOMAIN}:${WP_PORT}
-user: ${WP_ADMIN}
-# 显示设置数据库连接信息
-database:
-  host: db
-  name: ${MYSQL_DATABASE}
-  user: ${MYSQL_USER}
-  password: ${MYSQL_PASSWORD}
+url: https://${SITE_DOMAIN}
 EOF
-    
-    # 创建临时脚本文件
+
+    # 创建WordPress配置脚本
+    log_info "创建WordPress配置脚本..."
     cat > setup-wp.sh << 'EOF'
 #!/bin/bash
-# 设置超时和中断处理
-trap 'echo "收到中断信号，脚本退出"; exit 1' INT TERM
-set -e
+cd /var/www/html
 
-# 添加调试信息
-echo "======环境变量======="
-env | grep -E 'WORDPRESS|WP_|MYSQL'
-echo "===================="
-
-# 检查并确保文件权限正确
-echo "设置正确的文件权限..."
-chown -R www-data:www-data /var/www/html
-chmod -R 755 /var/www/html
-
-# 修改wp-config.php确保使用正确的数据库主机名和凭证
-echo "检查数据库连接..."
-if [ -f /var/www/html/wp-config.php ]; then
-  echo "找到wp-config.php，更新所有数据库设置..."
-
-  # 直接设置所有数据库配置项
-  wp config set DB_HOST db --allow-root
-  wp config set DB_NAME "$WORDPRESS_DB_NAME" --allow-root
-  wp config set DB_USER "$WORDPRESS_DB_USER" --allow-root
-  wp config set DB_PASSWORD "$WORDPRESS_DB_PASSWORD" --allow-root
-
-  # 移除可能导致问题的SSL设置
-  echo "移除SSL设置，避免连接问题..."
-  if grep -q "MYSQL_CLIENT_FLAGS" /var/www/html/wp-config.php; then
-    wp config delete MYSQL_CLIENT_FLAGS --allow-root || true
-  fi
-
-  # 直接编辑wp-config.php文件，手动添加禁用SSL验证的代码
-  echo "手动添加数据库连接选项..."
-  if ! grep -q "wp_db_connect_flags" /var/www/html/wp-config.php; then
-    # 在wp-config.php文件开头附近添加自定义连接函数
-    sed -i '/\/\* That.s all, stop editing!.*/i \
-// 自定义数据库连接设置\
-if ( !function_exists( "wp_db_connect_flags" ) ) {\
-    function wp_db_connect_flags() { return 2; /*MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT*/ }\
-}\
-' /var/www/html/wp-config.php
-  fi
-
-  # 打印wp-config.php的数据库配置部分，用于调试
-  echo "数据库配置："
-  grep -A 10 "DB_" /var/www/html/wp-config.php
-
-  # 检查是否已安装WordPress
-  if wp core is-installed --allow-root; then
-    echo "WordPress已安装，不需要重新安装"
-    WP_INSTALLED=true
-  else
-    echo "WordPress尚未安装，需要进行安装"
-    WP_INSTALLED=false
-  fi
-fi
-
-# 等待数据库连接可用
-echo "测试数据库连接..."
-max_attempts=20
-attempt=1
-
-# 首先诊断网络连接
-echo "检查与数据库容器的网络连接..."
-ping -c 3 db || echo "无法ping通数据库容器，但这可能是因为容器未配置响应ping"
-
-# 检查数据库端口
-echo "检查数据库端口..."
-nc -z -v db 3306 || echo "无法连接到数据库端口，可能是MySQL尚未完全启动"
-
-# 尝试root用户直接连接
-echo "尝试以root用户连接数据库..."
-if mysql -h db -u root -p"$MYSQL_ROOT_PASSWORD" --skip-ssl -e "SHOW DATABASES;" 2>/dev/null; then
-  echo "以root用户成功连接数据库!"
-
-  # 验证并修复用户权限
-  echo "验证WordPress用户权限..."
-  mysql -h db -u root -p"$MYSQL_ROOT_PASSWORD" --skip-ssl << EOSQL
-CREATE USER IF NOT EXISTS '$WORDPRESS_DB_USER'@'%' IDENTIFIED BY '$WORDPRESS_DB_PASSWORD';
-GRANT ALL PRIVILEGES ON $WORDPRESS_DB_NAME.* TO '$WORDPRESS_DB_USER'@'%';
-CREATE USER IF NOT EXISTS '$WORDPRESS_DB_USER'@'localhost' IDENTIFIED BY '$WORDPRESS_DB_PASSWORD';
-GRANT ALL PRIVILEGES ON $WORDPRESS_DB_NAME.* TO '$WORDPRESS_DB_USER'@'localhost';
-CREATE USER IF NOT EXISTS '$WORDPRESS_DB_USER'@'172.%.%.%' IDENTIFIED BY '$WORDPRESS_DB_PASSWORD';
-GRANT ALL PRIVILEGES ON $WORDPRESS_DB_NAME.* TO '$WORDPRESS_DB_USER'@'172.%.%.%';
-FLUSH PRIVILEGES;
-EOSQL
-
-  echo "用户权限已更新"
-else
-  echo "无法以root用户连接，将继续尝试WordPress用户连接"
-fi
-
-while [ $attempt -le $max_attempts ]; do
-  # 显示更多的连接调试信息
-  echo "尝试连接数据库... ($attempt/$max_attempts)"
-
-  # 使用mysqladmin ping测试连接 - 使用兼容的参数
-  if mysqladmin -h db -u "$WORDPRESS_DB_USER" -p"$WORDPRESS_DB_PASSWORD" --skip-ssl ping 2>/dev/null | grep -q 'mysqld is alive'; then
-    echo "数据库连接成功 (mysqladmin ping)!"
-    break
-  fi
-
-  # 备用方法：尝试MySQL直接连接 - 使用兼容的参数
-  if mysql -h db -u "$WORDPRESS_DB_USER" -p"$WORDPRESS_DB_PASSWORD" --skip-ssl -e "SHOW DATABASES;" 2>/dev/null; then
-    echo "数据库连接成功 (mysql query)!"
-    break
-  fi
-
-  # 显示详细的连接错误（但仅显示最多两行错误信息，避免信息过多）
-  echo "连接错误详情:"
-  mysql -h db -u "$WORDPRESS_DB_USER" -p"$WORDPRESS_DB_PASSWORD" --skip-ssl -e "SHOW DATABASES;" 2>&1 | head -2
-
-  # 显示MySQL容器状态
-  if [ $attempt -eq 5 -o $attempt -eq 10 -o $attempt -eq 15 ]; then
-    echo "MySQL容器状态检查 (尝试 $attempt):"
-    ps aux | grep mysql || echo "没有找到MySQL进程"
-    netstat -tuln | grep 3306 || echo "没有找到监听在3306端口的服务"
-
-    # 再次尝试以root用户连接并修复权限
-    echo "尝试以root用户修复权限..."
-    mysql -h db -u root -p"$MYSQL_ROOT_PASSWORD" --skip-ssl << EOSQL
-GRANT ALL PRIVILEGES ON *.* TO '$WORDPRESS_DB_USER'@'%' WITH GRANT OPTION;
-FLUSH PRIVILEGES;
-EOSQL
-  fi
-
-  attempt=$((attempt+1))
-  sleep 5
-
-  if [ $attempt -gt $max_attempts ]; then
-    echo "无法连接到数据库，最大尝试次数已用完"
-    echo "最终尝试使用root密码强制完成安装..."
-    # 尝试替换WordPress配置中的用户为root用户
-    wp config set DB_USER "root" --allow-root
-    wp config set DB_PASSWORD "$MYSQL_ROOT_PASSWORD" --allow-root
-    echo "已切换到root用户，继续安装..."
-    break
-  fi
+# 等待数据库准备就绪
+echo "等待数据库准备就绪..."
+until wp db check --allow-root 2>/dev/null; do
+  echo "等待数据库连接..."
+  sleep 2
 done
 
-# 等待WordPress完全初始化
-echo "WordPress初始化..."
-if wp core is-installed --allow-root 2>/dev/null; then
-  echo "WordPress已安装，跳过初始化"
-
-  # 如果WordPress已安装但用户需要更新管理员信息
-  echo "检查是否需要更新管理员账户..."
-  ADMIN_EXISTS=$(wp user get "$WP_ADMIN" --field=login --allow-root 2>/dev/null || echo "")
-
-  if [ -n "$ADMIN_EXISTS" ]; then
-    echo "管理员账户 $WP_ADMIN 已存在，更新密码..."
-    wp user update "$WP_ADMIN" --user_pass="$WP_ADMIN_PASSWORD" --allow-root || echo "更新管理员密码失败"
-  else
-    echo "创建新的管理员账户..."
-    wp user create "$WP_ADMIN" "$WP_ADMIN_EMAIL" --role=administrator --user_pass="$WP_ADMIN_PASSWORD" --allow-root || echo "创建管理员账户失败"
-  fi
-
-  # 更新站点标题和URL
-  echo "更新站点信息..."
+# 检查WordPress是否已安装
+echo "检查WordPress安装状态..."
+if wp core is-installed --allow-root; then
+  echo "WordPress已安装，更新配置..."
+  # 更新站点信息
   wp option update blogname "$WP_TITLE" --allow-root || echo "更新站点标题失败"
-  wp option update siteurl "http://${SITE_DOMAIN}:${WP_PORT}" --allow-root || echo "更新站点URL失败"
-  wp option update home "http://${SITE_DOMAIN}:${WP_PORT}" --allow-root || echo "更新站点首页URL失败"
+  wp option update siteurl "https://${SITE_DOMAIN}" --allow-root || echo "更新站点URL失败"
+  wp option update home "https://${SITE_DOMAIN}" --allow-root || echo "更新站点首页URL失败"
+  
+  # 配置SSL设置
+  wp config set FORCE_SSL_ADMIN true --allow-root || echo "设置强制管理员SSL失败"
+  wp config set FORCE_SSL_LOGIN true --allow-root || echo "设置强制登录SSL失败"
+  wp config set WP_HOME "https://${SITE_DOMAIN}" --allow-root || echo "设置WP_HOME失败"
+  wp config set WP_SITEURL "https://${SITE_DOMAIN}" --allow-root || echo "设置WP_SITEURL失败"
 else
   # 安装WordPress核心
   echo "安装WordPress核心..."
-  wp core install --title="$WP_TITLE" --admin_user="$WP_ADMIN" --admin_password="$WP_ADMIN_PASSWORD" --admin_email="$WP_ADMIN_EMAIL" --skip-email --allow-root || {
-    echo "直接WordPress安装失败，尝试使用替代方法..."
-    # 尝试使用curl直接访问安装页面
-    echo "通过访问安装页面检查WordPress状态..."
-    curl -v http://wordpress/wp-admin/install.php 2>&1 || echo "无法访问WordPress安装页面"
+  wp core install --url="https://${SITE_DOMAIN}" --title="$WP_TITLE" --admin_user="$WP_ADMIN" --admin_password="$WP_ADMIN_PASSWORD" --admin_email="$WP_ADMIN_EMAIL" --skip-email --allow-root || {
+    echo "WordPress安装失败"
     exit 1
   }
-
-  # 安装插件和主题
-  echo "安装插件和主题..."
-  wp theme install twentytwentythree --activate --allow-root || echo "主题安装失败，但继续执行"
-
-  echo "WordPress配置完成!"
+  
+  # 配置SSL设置
+  wp config set FORCE_SSL_ADMIN true --allow-root || echo "设置强制管理员SSL失败"
+  wp config set FORCE_SSL_LOGIN true --allow-root || echo "设置强制登录SSL失败"
+  wp config set WP_HOME "https://${SITE_DOMAIN}" --allow-root || echo "设置WP_HOME失败"
+  wp config set WP_SITEURL "https://${SITE_DOMAIN}" --allow-root || echo "设置WP_SITEURL失败"
 fi
 
-# 安装并配置WooCommerce
-echo "安装WooCommerce插件..."
-if wp plugin is-installed woocommerce --allow-root; then
-  echo "WooCommerce已安装，检查是否需要更新..."
-  if ! wp plugin is-active woocommerce --allow-root; then
-    echo "激活WooCommerce插件..."
-    wp plugin activate woocommerce --allow-root
-  fi
-
-  echo "检查WooCommerce更新..."
-  wp plugin update woocommerce --allow-root
-else
-  echo "安装WooCommerce插件..."
-  wp plugin install woocommerce --activate --allow-root || {
-    echo "WooCommerce安装失败，请手动检查错误"
-    exit 1
-  }
-fi
-
-# 设置WooCommerce基本配置
-echo "配置WooCommerce基本设置..."
-# 设置商店地址
-wp option update woocommerce_store_address "123 Main St" --allow-root
-wp option update woocommerce_store_city "Beijing" --allow-root
-wp option update woocommerce_store_postcode "100000" --allow-root
-wp option update woocommerce_default_country "CN" --allow-root
-wp option update woocommerce_currency "CNY" --allow-root
-
-echo "WooCommerce安装和配置完成！"
+# 刷新重写规则
+wp rewrite flush --allow-root
 EOF
     
     chmod +x setup-wp.sh
@@ -1074,11 +1034,113 @@ EOF
     echo "=================================="
     echo ""
     
+    # 配置Nginx反向代理
+    log_info "配置Nginx反向代理..."
+    
+    # 创建Nginx配置文件
+    cat > /etc/nginx/conf.d/${SITE_DOMAIN}.conf << EOF
+server {
+    listen 80;
+    server_name ${SITE_DOMAIN};
+    
+    # 强制所有HTTP请求重定向到HTTPS
+    location / {
+        return 301 https://\$server_name\$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${SITE_DOMAIN};
+
+    # SSL配置
+    ssl_certificate ${CERT_DIR}/cert.pem;
+    ssl_certificate_key ${CERT_DIR}/key.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers on;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_session_tickets off;
+
+    # HSTS设置
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header X-Content-Type-Options "nosniff" always;
+
+    # 代理设置
+    location / {
+        proxy_pass http://localhost:${WP_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Port 443;
+
+        # 超时设置
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        
+        # 缓冲区设置
+        proxy_buffer_size 128k;
+        proxy_buffers 4 256k;
+        proxy_busy_buffers_size 256k;
+        
+        # 启用WebSocket支持
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        # 修复WordPress重定向问题
+        proxy_redirect http://\$host:${WP_PORT}/ https://\$host/;
+        proxy_redirect https://\$host:${WP_PORT}/ https://\$host/;
+    }
+
+    # 静态文件缓存
+    location ~* \.(jpg|jpeg|png|gif|ico|css|js)$ {
+        proxy_pass http://localhost:${WP_PORT};
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_cache_valid 200 302 60m;
+        proxy_cache_valid 404 1m;
+        proxy_cache_use_stale error timeout http_500 http_502 http_503 http_504;
+        proxy_cache_bypass \$http_pragma;
+        proxy_cache_revalidate on;
+        expires 30d;
+        add_header Cache-Control "public, no-transform";
+    }
+
+    # 错误页面
+    error_page 500 502 503 504 /50x.html;
+    location = /50x.html {
+        root /usr/share/nginx/html;
+    }
+}
+EOF
+    
+    # 测试Nginx配置
+    if ! nginx -t; then
+        log_error "Nginx配置测试失败，请检查配置文件"
+        return
+    fi
+    
+    # 重载Nginx配置
+    systemctl reload nginx
+    
+    if [ $? -ne 0 ]; then
+        log_error "Nginx重载失败，请检查错误信息"
+        return
+    fi
+    
+    log_info "SSL证书配置完成，现在可以通过 https://${SITE_DOMAIN} 访问您的网站"
+    
     # 保存配置信息到文件
     {
         echo "# WordPress站点配置"
-        echo "站点URL: http://localhost:${WP_PORT} 或 http://${SITE_DOMAIN}:${WP_PORT}"
-        echo "管理员面板: http://localhost:${WP_PORT}/wp-admin"
+        echo "站点URL: http://${SITE_DOMAIN} 或 https://${SITE_DOMAIN} (如果已配置SSL)"
+        echo "管理员面板: http://${SITE_DOMAIN}/wp-admin"
         echo "管理员用户名: ${WP_ADMIN}"
         echo "管理员密码: ${WP_ADMIN_PASSWORD}"
         echo "管理员邮箱: ${WP_ADMIN_EMAIL}"
@@ -1089,6 +1151,13 @@ EOF
         echo "用户名: ${MYSQL_USER}"
         echo "密码: ${MYSQL_PASSWORD}"
         echo "根密码: ${MYSQL_ROOT_PASSWORD}"
+        echo ""
+        echo "# Nginx配置"
+        echo "配置文件: /etc/nginx/conf.d/${SITE_DOMAIN}.conf"
+        if [ -f "/etc/nginx/ssl/${SITE_DOMAIN}/cert.pem" ]; then
+            echo "SSL证书: /etc/nginx/ssl/${SITE_DOMAIN}/cert.pem"
+            echo "SSL密钥: /etc/nginx/ssl/${SITE_DOMAIN}/key.pem"
+        fi
         echo ""
         echo "# 数据目录"
         echo "$(pwd)/data"
@@ -1120,51 +1189,36 @@ manage_certificate() {
     show_cert_menu() {
         echo ""
         echo -e "${BLUE}========== 证书配置与管理 ==========${NC}"
-        echo -e "${GREEN}1.${NC} 安装Nginx服务"
-        echo -e "${GREEN}2.${NC} 安装acme服务"
-        echo -e "${GREEN}3.${NC} 配置acme信息"
-        echo -e "${GREEN}4.${NC} 查看Nginx状态"
-        echo -e "${GREEN}5.${NC} 查看acme信息"
-        echo -e "${GREEN}6.${NC} 添加证书"
-        echo -e "${GREEN}7.${NC} 证书管理"
-        echo -e "${GREEN}8.${NC} 证书续签"
+        echo -e "${GREEN}1.${NC} acme信息管理"
+        echo -e "${GREEN}2.${NC} 证书申请"
+        echo -e "${GREEN}3.${NC} 证书管理"
+        echo -e "${GREEN}4.${NC} 证书续签"
+        echo -e "${GREEN}5.${NC} 为WordPress站点申请证书"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        echo -n "请选择操作 [0-8]: "
+        echo -n "请选择操作 [0-5]: "
         read -n 1 cert_choice
         echo ""
         
         case $cert_choice in
             1)
-                install_nginx_service
+                manage_acme_info
                 show_cert_menu
             ;;
             2)
-                install_acme_service
-                show_cert_menu
-            ;;
-            3)
-                configure_acme_info
-                show_cert_menu
-            ;;
-            4)
-                check_nginx_status
-                show_cert_menu
-            ;;
-            5)
-                check_acme_info
-                show_cert_menu
-            ;;
-            6)
                 add_certificate
                 show_cert_menu
             ;;
-            7)
+            3)
                 manage_certificates_submenu
                 show_cert_menu
             ;;
-            8)
+            4)
                 renew_certificate
+                show_cert_menu
+            ;;
+            5)
+                add_wordpress_certificate
                 show_cert_menu
             ;;
             0)
@@ -1188,6 +1242,235 @@ manage_certificate() {
     
     # 重置信号处理器
     trap - INT TERM
+}
+
+# 为WordPress站点申请证书
+add_wordpress_certificate() {
+    log_info "为WordPress站点申请证书"
+    
+    # 检查Nginx是否已安装
+    if ! which nginx &>/dev/null; then
+        log_error "Nginx未安装，请先安装Nginx服务"
+        return 1
+    fi
+    
+    # 检查acme.sh是否已安装
+    if [ ! -f "/root/.acme.sh/acme.sh" ]; then
+        log_error "acme.sh未安装，请先安装acme服务"
+        return 1
+    fi
+    
+    # 检查acme.sh账号是否已注册
+    if [ ! -f "/root/.acme.sh/account.conf" ] || ! grep -q "ACCOUNT_EMAIL=" "/root/.acme.sh/account.conf"; then
+        log_error "acme.sh账号未注册，请先配置acme信息"
+        return 1
+    fi
+    
+    # 检查Cloudflare配置是否存在
+    if [ ! -f "/etc/nginx/ssl/acme-conf/cloudflare.conf" ]; then
+        log_error "Cloudflare配置未找到，请先配置acme信息"
+        return 1
+    fi
+    
+    # 获取WordPress站点信息
+    echo -e "${BLUE}请输入WordPress站点信息${NC}"
+    echo "=================================="
+    
+    # 站点域名
+    echo -n "站点域名 (例如: wordpress.liukersun.com): "
+    read SITE_DOMAIN
+    SITE_DOMAIN=${SITE_DOMAIN:-wordpress.liukersun.com}
+    
+    
+    # WordPress端口
+    echo -n "WordPress访问端口 (默认: 8080): "
+    read WP_PORT
+    WP_PORT=${WP_PORT:-8080}
+    
+    # 检查证书是否已存在且未过期
+    CERT_DIR="/etc/nginx/ssl/${SITE_DOMAIN}"
+    if [ -f "${CERT_DIR}/cert.pem" ] && [ -f "${CERT_DIR}/key.pem" ]; then
+        log_info "检测到已存在的证书，跳过申请步骤"
+        log_info "证书路径: ${CERT_DIR}"
+    else
+        # 验证域名解析
+        log_info "验证域名解析..."
+        if ! dig +short ${SITE_DOMAIN} | grep -q '^[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}$'; then
+            log_error "域名 ${SITE_DOMAIN} 未正确解析到服务器IP"
+            echo -n "是否继续申请证书? [y/N]: "
+            read -n 1 continue_choice
+            echo ""
+            if [[ ! "$continue_choice" =~ ^[Yy]$ ]]; then
+                log_info "取消SSL证书申请"
+                return
+            fi
+        fi
+        
+        # 显示申请证书的提示信息
+        echo -e "${YELLOW}即将申请SSL证书，请确认以下信息：${NC}"
+        echo "1. 域名: ${SITE_DOMAIN}"
+        echo "2. 验证方式: DNS验证 (Cloudflare)"
+        echo "3. 证书类型: Let's Encrypt ECC证书"
+        echo "4. 证书有效期: 90天"
+        echo ""
+        echo -n "是否继续申请SSL证书? [Y/n]: "
+        read -n 1 ssl_confirm
+        echo ""
+        
+        if [[ "$ssl_confirm" =~ ^[Nn]$ ]]; then
+            log_info "取消SSL证书申请"
+            return
+        fi
+        
+        # 使用acme.sh申请证书
+        log_info "使用acme.sh申请证书..."
+        
+        # 加载Cloudflare配置
+        if [ -f "/etc/nginx/ssl/acme-conf/cloudflare.conf" ]; then
+            source /etc/nginx/ssl/acme-conf/cloudflare.conf
+        else
+            log_error "Cloudflare配置未找到，请先配置acme信息"
+            return
+        fi
+        
+        # 创建证书目录
+        mkdir -p "${CERT_DIR}"
+        
+        # 申请证书
+        /root/.acme.sh/acme.sh --issue --dns dns_cf -d "${SITE_DOMAIN}" -d "*.${SITE_DOMAIN}" --keylength ec-256
+        
+        if [ $? -ne 0 ]; then
+            log_error "SSL证书申请失败，请检查以下可能的原因："
+            echo "1. 域名未在Cloudflare上正确配置"
+            echo "2. Cloudflare API令牌权限不足"
+            echo "3. 域名解析未生效"
+            echo "4. 网络连接问题"
+            echo "5. acme.sh账号配置有误"
+            return
+        fi
+        
+        # 安装证书
+        /root/.acme.sh/acme.sh --install-cert -d ${SITE_DOMAIN} \
+        --key-file ${CERT_DIR}/key.pem \
+        --fullchain-file ${CERT_DIR}/cert.pem \
+        --reloadcmd "systemctl reload nginx"
+        
+        if [ $? -ne 0 ]; then
+            log_error "证书安装失败，请检查错误信息"
+            return
+        fi
+        
+        # 设置证书权限
+        chmod 600 "${CERT_DIR}/key.pem"
+        chmod 644 "${CERT_DIR}/cert.pem"
+    fi
+    
+    # 更新Nginx配置支持HTTPS
+    log_info "配置Nginx支持HTTPS..."
+    cat > /etc/nginx/conf.d/${SITE_DOMAIN}.conf << EOF
+server {
+    listen 80;
+    server_name ${SITE_DOMAIN};
+    
+    # 强制所有HTTP请求重定向到HTTPS
+    location / {
+        return 301 https://\$server_name\$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${SITE_DOMAIN};
+
+    # SSL配置
+    ssl_certificate ${CERT_DIR}/cert.pem;
+    ssl_certificate_key ${CERT_DIR}/key.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers on;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_session_tickets off;
+
+    # HSTS设置
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header X-Content-Type-Options "nosniff" always;
+
+    # 代理设置
+    location / {
+        proxy_pass http://localhost:${WP_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Port 443;
+
+        # 超时设置
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        
+        # 缓冲区设置
+        proxy_buffer_size 128k;
+        proxy_buffers 4 256k;
+        proxy_busy_buffers_size 256k;
+        
+        # 启用WebSocket支持
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        # 修复WordPress重定向问题
+        proxy_redirect http://\$host:${WP_PORT}/ https://\$host/;
+        proxy_redirect https://\$host:${WP_PORT}/ https://\$host/;
+    }
+
+    # 静态文件缓存
+    location ~* \.(jpg|jpeg|png|gif|ico|css|js)$ {
+        proxy_pass http://localhost:${WP_PORT};
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_cache_valid 200 302 60m;
+        proxy_cache_valid 404 1m;
+        proxy_cache_use_stale error timeout http_500 http_502 http_503 http_504;
+        proxy_cache_bypass \$http_pragma;
+        proxy_cache_revalidate on;
+        expires 30d;
+        add_header Cache-Control "public, no-transform";
+    }
+
+    # 错误页面
+    error_page 500 502 503 504 /50x.html;
+    location = /50x.html {
+        root /usr/share/nginx/html;
+    }
+}
+EOF
+    
+    # 测试Nginx配置
+    if ! nginx -t; then
+        log_error "Nginx配置测试失败，请检查配置文件"
+        return
+    fi
+    
+    # 重载Nginx配置
+    systemctl reload nginx
+    
+    if [ $? -ne 0 ]; then
+        log_error "Nginx重载失败，请检查错误信息"
+        return
+    fi
+    
+    log_info "SSL证书配置完成，现在可以通过 https://${SITE_DOMAIN} 访问您的网站"
+    
+    # 等待用户按键继续
+    echo ""
+    read -n 1 -p "按任意键继续..." dummy
+    echo ""
+    
+    return 0
 }
 
 # 安装Nginx服务
@@ -1275,19 +1558,32 @@ install_acme_service() {
     mkdir -p /etc/nginx/ssl/acme-conf
     
     # 获取用户邮箱
-    echo -n "请输入您的有效邮箱地址 (用于Let's Encrypt通知): "
-    read USER_EMAIL
-    
-    # 验证邮箱格式
-    if [[ ! "$USER_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-        log_error "邮箱格式无效，请输入正确的邮箱地址"
-        return 1
-    fi
-    
-    # 保存邮箱到默认配置文件
-    mkdir -p /etc/nginx/ssl/acme-conf
-    echo "DEFAULT_EMAIL=\"$USER_EMAIL\"" > /etc/nginx/ssl/acme-conf/default.conf
-    chmod 600 /etc/nginx/ssl/acme-conf/default.conf
+    while true; do
+        echo -n "请输入您的有效邮箱地址 (用于Let's Encrypt通知): "
+        read USER_EMAIL
+        
+        # 验证邮箱格式
+        if [[ ! "$USER_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+            log_error "邮箱格式无效，请输入正确的邮箱地址"
+            continue
+        fi
+        
+        # 验证邮箱域名
+        EMAIL_DOMAIN=$(echo "$USER_EMAIL" | cut -d'@' -f2)
+        if [[ "$EMAIL_DOMAIN" == "example.com" || "$EMAIL_DOMAIN" == "localhost" ]]; then
+            log_error "不允许使用example.com或localhost作为邮箱域名"
+            continue
+        fi
+        
+        # 确认邮箱
+        echo -n "确认使用邮箱 $USER_EMAIL? [Y/n]: "
+        read -n 1 confirm
+        echo ""
+        
+        if [[ ! "$confirm" =~ ^[Nn]$ ]]; then
+            break
+        fi
+    done
     
     # 创建acme.sh安装脚本
     cat > /tmp/acme-install.sh << EOF
@@ -1320,9 +1616,6 @@ else
     echo "acme.sh 安装失败!"
     exit 1
 fi
-
-# 配置acme.sh使用nginx模式
-"\$ACME_HOME/acme.sh" --set-default-webroot /var/www/acme-challenge
 EOF
     
     chmod +x /tmp/acme-install.sh
@@ -1330,14 +1623,15 @@ EOF
     # 执行安装脚本
     log_info "开始安装acme.sh..."
     if bash /tmp/acme-install.sh; then
-        log_info "acme.sh安装成功，已配置使用Nginx进行验证"
+        log_info "acme.sh安装成功"
+        
+        # 保存账号信息
+        echo "ACCOUNT_EMAIL=$USER_EMAIL" > /root/.acme.sh/account.conf
+        echo "ACCOUNT_KEY_PATH=/root/.acme.sh/account.key" >> /root/.acme.sh/account.conf
+        log_success "账号信息已保存"
     else
         log_error "acme.sh安装失败"
     fi
-    
-    # 注册acme.sh账号
-    log_info "注册acme.sh账号..."
-    /root/.acme.sh/acme.sh --register-account -m "$USER_EMAIL"
     
     # 清理临时文件
     rm -f /tmp/acme-install.sh
@@ -1367,84 +1661,226 @@ configure_acme_info() {
     # 创建配置目录
     mkdir -p /etc/nginx/ssl/acme-conf
     
-    # 显示配置选项
-    echo "请选择DNS API配置:"
-    echo "1. Cloudflare DNS API"
-    echo "2. 阿里云DNS API"
-    echo "3. 腾讯云DNS API"
-    echo "4. 配置默认参数"
-    echo "0. 返回上级菜单"
+    # 获取有效邮箱地址的函数
+    get_valid_email() {
+        while true; do
+            echo -n "请输入您的有效邮箱地址 (用于Let's Encrypt通知): "
+            read USER_EMAIL
+            
+            # 验证邮箱格式
+            if [[ ! "$USER_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+                log_error "邮箱格式无效，请输入正确的邮箱地址"
+                continue
+            fi
+            
+            # 验证邮箱域名
+            EMAIL_DOMAIN=$(echo "$USER_EMAIL" | cut -d'@' -f2)
+            if [[ "$EMAIL_DOMAIN" == "example.com" || "$EMAIL_DOMAIN" == "localhost" ]]; then
+                log_error "不允许使用example.com或localhost作为邮箱域名"
+                continue
+            fi
+            
+            # 确认邮箱
+            echo -n "确认使用邮箱 $USER_EMAIL? [Y/n]: "
+            read -n 1 confirm
+            echo ""
+            
+            if [[ ! "$confirm" =~ ^[Nn]$ ]]; then
+                break
+            fi
+        done
+    }
     
-    read -p "请选择 [0-4]: " config_option
+    # 检查账号是否已注册
+    if ! /root/.acme.sh/acme.sh --info | grep -q "Account Email:"; then
+        log_info "未检测到acme.sh账号，需要注册新账号"
+        get_valid_email
+        
+        # 注册acme.sh账号
+        log_info "注册acme.sh账号..."
+        /root/.acme.sh/acme.sh --register-account -m "$USER_EMAIL" --server letsencrypt
+        
+        if [ $? -ne 0 ]; then
+            log_error "账号注册失败，请检查以下可能的原因："
+            echo "1. 邮箱格式不正确"
+            echo "2. 网络连接问题"
+            echo "3. Let's Encrypt服务器暂时不可用"
+            return 1
+        fi
+        
+        # 保存账号信息
+        echo "ACCOUNT_EMAIL=$USER_EMAIL" > /root/.acme.sh/account.conf
+        echo "ACCOUNT_KEY_PATH=/root/.acme.sh/account.key" >> /root/.acme.sh/account.conf
+        log_success "账号注册成功"
+    else
+        # 显示当前账号信息
+        CURRENT_EMAIL=$(/root/.acme.sh/acme.sh --info | grep "Account Email:" | cut -d: -f2 | xargs)
+        log_info "当前账号邮箱: $CURRENT_EMAIL"
+        
+        # 如果当前邮箱是example.com，强制更新
+        if [[ "$CURRENT_EMAIL" == *"example.com"* ]]; then
+            log_warn "检测到无效的邮箱地址，需要更新"
+            get_valid_email
+            NEW_EMAIL=$USER_EMAIL
+        else
+            # 询问是否修改账号
+            echo -n "是否修改账号邮箱? [y/N]: "
+            read -n 1 change_email
+            echo ""
+            
+            if [[ "$change_email" =~ ^[Yy]$ ]]; then
+                get_valid_email
+                NEW_EMAIL=$USER_EMAIL
+            else
+                return 0
+            fi
+        fi
+        
+        # 更新账号
+        log_info "更新acme.sh账号..."
+        /root/.acme.sh/acme.sh --update-account --accountemail "$NEW_EMAIL" --server letsencrypt
+        
+        if [ $? -ne 0 ]; then
+            log_error "账号更新失败"
+            return 1
+        fi
+        
+        # 更新配置文件
+        sed -i "s/ACCOUNT_EMAIL=.*/ACCOUNT_EMAIL=$NEW_EMAIL/" /root/.acme.sh/account.conf
+        log_success "账号更新成功"
+    fi
     
-    case $config_option in
+    # 配置DNS提供商
+    echo -e "${BLUE}选择DNS提供商:${NC}"
+    echo "1. Cloudflare"
+    echo "2. 阿里云"
+    echo "3. 腾讯云"
+    echo "0. 返回"
+    echo -n "请选择 [0-3]: "
+    read -n 1 dns_choice
+    echo ""
+    
+    case $dns_choice in
         1)
-            echo "配置Cloudflare DNS API:"
-            read -p "请输入Cloudflare 全局API Key: " cf_key
-            read -p "请输入Cloudflare 邮箱: " cf_email
+            # Cloudflare配置
+            echo -e "${BLUE}配置Cloudflare API信息${NC}"
+            echo "=================================="
+            echo "您需要提供Cloudflare的API信息以进行DNS验证"
+            echo "1. 登录Cloudflare控制台"
+            echo "2. 进入'我的个人资料' -> 'API令牌'"
+            echo "3. 创建新的API令牌，选择'编辑区域DNS'权限"
+            echo ""
+            
+            while true; do
+                echo -n "请输入Cloudflare API令牌: "
+                read CF_API_TOKEN
+                
+                if [ -z "$CF_API_TOKEN" ]; then
+                    log_error "API令牌不能为空"
+                    continue
+                fi
+                # 确认API令牌
+                echo -n "确认使用此API令牌? [Y/n]: "
+                read -n 1 confirm
+                echo ""
+                
+                if [[ ! "$confirm" =~ ^[Nn]$ ]]; then
+                    break
+                fi
+            done
             
             # 保存Cloudflare配置
             cat > /etc/nginx/ssl/acme-conf/cloudflare.conf << EOF
-export CF_Key="$cf_key"
-export CF_Email="$cf_email"
+export CF_Key="$CF_API_TOKEN"
+export CF_Email="$USER_EMAIL"
 EOF
             chmod 600 /etc/nginx/ssl/acme-conf/cloudflare.conf
             log_success "Cloudflare DNS API配置已保存"
         ;;
-        
         2)
-            echo "配置阿里云DNS API:"
-            read -p "请输入阿里云AccessKey ID: " ali_key
-            read -p "请输入阿里云AccessKey Secret: " ali_secret
+            # 阿里云配置
+            echo -e "${BLUE}配置阿里云API信息${NC}"
+            echo "=================================="
+            echo "您需要提供阿里云的API信息以进行DNS验证"
+            echo "1. 登录阿里云控制台"
+            echo "2. 进入'AccessKey管理'"
+            echo "3. 创建AccessKey"
+            echo ""
+            
+            while true; do
+                echo -n "请输入阿里云AccessKey ID: "
+                read ALI_KEY
+                echo -n "请输入阿里云AccessKey Secret: "
+                read ALI_SECRET
+                
+                if [ -z "$ALI_KEY" ] || [ -z "$ALI_SECRET" ]; then
+                    log_error "AccessKey不能为空"
+                    continue
+                fi
+                
+                # 确认AccessKey
+                echo -n "确认使用此AccessKey? [Y/n]: "
+                read -n 1 confirm
+                echo ""
+                
+                if [[ ! "$confirm" =~ ^[Nn]$ ]]; then
+                    break
+                fi
+            done
             
             # 保存阿里云配置
             cat > /etc/nginx/ssl/acme-conf/aliyun.conf << EOF
-export Ali_Key="$ali_key"
-export Ali_Secret="$ali_secret"
+export Ali_Key="$ALI_KEY"
+export Ali_Secret="$ALI_SECRET"
 EOF
             chmod 600 /etc/nginx/ssl/acme-conf/aliyun.conf
             log_success "阿里云DNS API配置已保存"
         ;;
-        
         3)
-            echo "配置腾讯云DNS API:"
-            read -p "请输入腾讯云SecretId: " tencent_id
-            read -p "请输入腾讯云SecretKey: " tencent_key
+            # 腾讯云配置
+            echo -e "${BLUE}配置腾讯云API信息${NC}"
+            echo "=================================="
+            echo "您需要提供腾讯云的API信息以进行DNS验证"
+            echo "1. 登录腾讯云控制台"
+            echo "2. 进入'访问管理' -> 'API密钥管理'"
+            echo "3. 创建API密钥"
+            echo ""
+            
+            while true; do
+                echo -n "请输入腾讯云SecretId: "
+                read TXY_SECRETID
+                echo -n "请输入腾讯云SecretKey: "
+                read TXY_SECRETKEY
+                
+                if [ -z "$TXY_SECRETID" ] || [ -z "$TXY_SECRETKEY" ]; then
+                    log_error "SecretId和SecretKey不能为空"
+                    continue
+                fi
+                
+                # 确认API信息
+                echo -n "确认使用此API信息? [Y/n]: "
+                read -n 1 confirm
+                echo ""
+                
+                if [[ ! "$confirm" =~ ^[Nn]$ ]]; then
+                    break
+                fi
+            done
             
             # 保存腾讯云配置
             cat > /etc/nginx/ssl/acme-conf/tencent.conf << EOF
-export TENCENT_SecretId="$tencent_id"
-export TENCENT_SecretKey="$tencent_key"
+export TXY_SecretId="$TXY_SECRETID"
+export TXY_SecretKey="$TXY_SECRETKEY"
 EOF
             chmod 600 /etc/nginx/ssl/acme-conf/tencent.conf
             log_success "腾讯云DNS API配置已保存"
         ;;
-        
-        4)
-            echo "配置默认参数:"
-            read -p "请输入默认邮箱: " default_email
-            
-            # 保存默认配置
-            cat > /etc/nginx/ssl/acme-conf/default.conf << EOF
-DEFAULT_EMAIL="$default_email"
-EOF
-            chmod 600 /etc/nginx/ssl/acme-conf/default.conf
-            
-            # 注册acme.sh账号
-            /root/.acme.sh/acme.sh --register-account -m "$default_email"
-            
-            # 设置默认CA为Let's Encrypt
-            /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-            
-            log_success "默认参数已配置"
-        ;;
-        
         0)
             return 0
         ;;
-        
         *)
             log_error "无效选项"
+            return 1
         ;;
     esac
     
@@ -1584,14 +2020,8 @@ add_certificate() {
     log_info "添加证书"
     
     # 检查Nginx是否已安装
-    if ! which nginx &> /dev/null; then
+    if ! which nginx &>/dev/null; then
         log_error "Nginx未安装，请先安装Nginx服务"
-        return 1
-    fi
-    
-    # 检查Nginx服务是否运行
-    if ! systemctl is-active --quiet nginx; then
-        log_error "Nginx服务未运行，请先启动Nginx服务"
         return 1
     fi
     
@@ -1601,251 +2031,169 @@ add_certificate() {
         return 1
     fi
     
-    # 获取域名
-    echo -n "请输入域名 (例如: example.com): "
-    read DOMAIN
-    if [ -z "$DOMAIN" ]; then
-        log_error "域名不能为空"
+    # 检查acme.sh账号是否已注册
+    if [ ! -f "/root/.acme.sh/account.conf" ] || ! grep -q "ACCOUNT_EMAIL=" "/root/.acme.sh/account.conf"; then
+        log_error "acme.sh账号未注册，请先配置acme信息"
         return 1
     fi
     
-    # 选择验证方式
+    # 获取acme.sh账号信息
+    ACME_EMAIL=$(grep "ACCOUNT_EMAIL=" /root/.acme.sh/account.conf | cut -d'=' -f2)
+    if [[ "$ACME_EMAIL" == "example.com" || -z "$ACME_EMAIL" ]]; then
+        log_error "acme.sh账号邮箱无效，请先修改acme信息"
+        return 1
+    fi
+    
+    # 检查Cloudflare配置是否存在
+    if [ ! -f "/etc/nginx/ssl/acme-conf/cloudflare.conf" ]; then
+        log_error "Cloudflare配置未找到，请先配置acme信息"
+        return 1
+    fi
+    
+    # 获取域名
+    while true; do
+        echo -n "请输入要申请证书的域名 (例如: example.com): "
+        read DOMAIN
+        
+        # 验证域名格式
+        if [[ ! "$DOMAIN" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9](\.[a-zA-Z]{2,})+$ ]]; then
+            log_error "域名格式无效，请输入正确的域名"
+            continue
+        fi
+        
+        # 确认域名
+        echo -n "确认使用域名 $DOMAIN? [Y/n]: "
+        read -n 1 confirm
+        echo ""
+        
+        if [[ ! "$confirm" =~ ^[Nn]$ ]]; then
+            break
+        fi
+    done
+    
+    # 创建证书目录
+    mkdir -p "/etc/nginx/ssl/$DOMAIN"
+    
+    # 加载Cloudflare配置
+    source /etc/nginx/ssl/acme-conf/cloudflare.conf
+    
+    # 显示验证信息
+    echo -e "${BLUE}证书申请信息:${NC}"
+    echo "域名: $DOMAIN"
+    echo "验证方式: Cloudflare DNS验证"
+    echo "证书类型: ECC证书 (ec-256)"
+    echo "acme.sh账号: $ACME_EMAIL"
     echo ""
-    echo "请选择证书验证方式:"
-    echo "1. HTTP验证 (需要域名已正确解析到服务器IP)"
-    echo "2. DNS验证 (通过DNS解析验证域名所有权)"
-    echo "0. 取消"
+    echo -e "${YELLOW}注意:${NC}"
+    echo "1. 请确保域名已在Cloudflare上正确配置"
+    echo "2. 请确保Cloudflare API令牌具有足够的权限"
+    echo "3. 验证过程可能需要几分钟时间"
     echo ""
-    echo -n "请选择验证方式 [0-2]: "
-    read -n 1 validation_choice
+    echo -n "确认开始申请证书? [Y/n]: "
+    read -n 1 confirm
     echo ""
     
-    case $validation_choice in
-        1)
-            # HTTP验证
-            log_info "使用HTTP验证申请证书..."
-            
-            # 更新Nginx配置
-            cat > /etc/nginx/conf.d/${DOMAIN}.conf << EOF
+    if [[ "$confirm" =~ ^[Nn]$ ]]; then
+        log_info "取消证书申请"
+        return 0
+    fi
+    
+    # 申请证书
+    log_info "正在申请证书..."
+    /root/.acme.sh/acme.sh --issue --dns dns_cf -d "$DOMAIN" -d "*.$DOMAIN" --keylength ec-256
+    
+    if [ $? -ne 0 ]; then
+        log_error "证书申请失败，请检查以下可能的原因："
+        echo "1. 域名未在Cloudflare上正确配置"
+        echo "2. Cloudflare API令牌权限不足"
+        echo "3. 域名解析未生效"
+        echo "4. 网络连接问题"
+        echo "5. acme.sh账号配置有误"
+        return 1
+    fi
+    
+    # 安装证书
+    log_info "正在安装证书..."
+    /root/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
+    --key-file "/etc/nginx/ssl/$DOMAIN/key.pem" \
+    --fullchain-file "/etc/nginx/ssl/$DOMAIN/cert.pem" \
+    --reloadcmd "systemctl reload nginx"
+    
+    # 设置证书权限
+    chmod 600 "/etc/nginx/ssl/$DOMAIN/key.pem"
+    chmod 644 "/etc/nginx/ssl/$DOMAIN/cert.pem"
+    
+    # 更新Nginx配置支持HTTPS
+    log_info "配置Nginx支持HTTPS..."
+    cat > /etc/nginx/conf.d/${DOMAIN}.conf << EOF
 server {
     listen 80;
     server_name ${DOMAIN};
-
-    location / {
-        root   /usr/share/nginx/html;
-        index  index.html index.htm;
-    }
-
-    # 用于acme.sh验证
-    location /.well-known/acme-challenge/ {
-        root /var/www/acme-challenge;
-        try_files \$uri =404;
-    }
-}
-EOF
-            
-            # 重载Nginx配置
-            systemctl reload nginx
-            
-            # 验证DNS是否已解析
-            echo -e "${YELLOW}提示: 确保域名 $DOMAIN 已正确解析到此服务器IP${NC}"
-            echo -n "确认DNS已正确设置? [Y/n]: "
-            read -n 1 dns_confirm
-            echo ""
-            if [[ "$dns_confirm" =~ ^[Nn]$ ]]; then
-                log_info "请先设置DNS记录，然后再申请证书"
-                return 1
-            fi
-            
-            # 申请证书
-            log_info "开始申请证书..."
-            /root/.acme.sh/acme.sh --issue -d ${DOMAIN} -w /var/www/acme-challenge --force
-            
-            if [ $? -ne 0 ]; then
-                log_error "证书申请失败，请检查错误信息"
-                return 1
-            fi
-            
-            # 安装证书到Nginx目录
-            log_info "安装证书到Nginx..."
-            mkdir -p /etc/nginx/ssl/certs
-            /root/.acme.sh/acme.sh --install-cert -d ${DOMAIN} \
-            --key-file       /etc/nginx/ssl/certs/${DOMAIN}_key.pem \
-            --fullchain-file /etc/nginx/ssl/certs/${DOMAIN}_cert.pem \
-            --reloadcmd     "systemctl reload nginx"
-            
-            if [ $? -ne 0 ]; then
-                log_error "证书安装失败，请检查错误信息"
-                return 1
-            fi
-            
-            # 更新Nginx配置支持HTTPS
-            log_info "配置Nginx支持HTTPS..."
-            cat > /etc/nginx/conf.d/${DOMAIN}.conf << EOF
-server {
-    listen 80;
-    server_name ${DOMAIN};
-
-    # 重定向HTTP到HTTPS
-    location / {
-        return 301 https://\$host\$request_uri;
-    }
-
-    # 用于acme.sh验证
-    location /.well-known/acme-challenge/ {
-        root /var/www/acme-challenge;
-        try_files \$uri =404;
-    }
+    return 301 https://\$host\$request_uri;
 }
 
 server {
     listen 443 ssl;
     server_name ${DOMAIN};
 
-    ssl_certificate     /etc/nginx/ssl/certs/${DOMAIN}_cert.pem;
-    ssl_certificate_key /etc/nginx/ssl/certs/${DOMAIN}_key.pem;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_certificate /etc/nginx/ssl/${DOMAIN}/cert.pem;
+    ssl_certificate_key /etc/nginx/ssl/${DOMAIN}/key.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_session_tickets off;
 
     location / {
-        root   /usr/share/nginx/html;
-        index  index.html index.htm;
+        proxy_pass http://localhost:${WP_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+
+        # 增加超时设置
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        
+        # 修复重定向问题
+        proxy_redirect http://\$host:${WP_PORT}/ https://\$host/;
+        proxy_redirect https://\$host:${WP_PORT}/ https://\$host/;
     }
 }
 EOF
-            
-            # 重载Nginx配置
-            systemctl reload nginx
-            
-            log_info "证书申请和安装成功!"
-        ;;
-        2)
-            # DNS验证
-            log_info "使用DNS验证申请证书..."
-            
-            # 检查是否有已配置的DNS提供商
-            if [ ! -d "/etc/nginx/ssl/acme-conf" ] || [ ! "$(ls -A /etc/nginx/ssl/acme-conf 2>/dev/null)" ]; then
-                log_error "未配置DNS提供商，请先配置acme信息"
-                return 1
-            fi
-            
-            echo "已配置的DNS提供商:"
-            dns_providers=()
-            dns_config_files=()
-            index=1
-            
-            if [ -f "/etc/nginx/ssl/acme-conf/cloudflare.conf" ]; then
-                echo "$index. Cloudflare"
-                dns_providers[$index]="dns_cf"
-                dns_config_files[$index]="cloudflare.conf"
-                index=$((index+1))
-            fi
-            
-            if [ -f "/etc/nginx/ssl/acme-conf/aliyun.conf" ]; then
-                echo "$index. 阿里云DNS"
-                dns_providers[$index]="dns_ali"
-                dns_config_files[$index]="aliyun.conf"
-                index=$((index+1))
-            fi
-            
-            if [ -f "/etc/nginx/ssl/acme-conf/tencent.conf" ]; then
-                echo "$index. 腾讯云DNS"
-                dns_providers[$index]="dns_dp"
-                dns_config_files[$index]="tencent.conf"
-                index=$((index+1))
-            fi
-            
-            if [ ${#dns_providers[@]} -eq 0 ]; then
-                log_error "未找到已配置的DNS提供商"
-                return 1
-            fi
-            
-            echo -n "请选择DNS提供商 [1-$((index-1))]: "
-            read dns_provider_choice
-            
-            if [[ ! "$dns_provider_choice" =~ ^[0-9]+$ ]] || [ "$dns_provider_choice" -lt 1 ] || [ "$dns_provider_choice" -ge "$index" ]; then
-                log_error "无效选择"
-                return 1
-            fi
-            
-            DNS_PROVIDER="${dns_providers[$dns_provider_choice]}"
-            DNS_CONFIG_FILE="${dns_config_files[$dns_provider_choice]}"
-            
-            # 加载DNS提供商配置
-            log_info "加载DNS配置: ${DNS_CONFIG_FILE}"
-            source "/etc/nginx/ssl/acme-conf/${DNS_CONFIG_FILE}"
-            
-            # 申请证书
-            log_info "开始申请证书..."
-            /root/.acme.sh/acme.sh --issue --dns ${DNS_PROVIDER} -d ${DOMAIN} --force
-            
-            if [ $? -ne 0 ]; then
-                log_error "证书申请失败，请检查错误信息"
-                return 1
-            fi
-            
-            # 安装证书到Nginx目录
-            log_info "安装证书到Nginx..."
-            mkdir -p /etc/nginx/ssl/certs
-            /root/.acme.sh/acme.sh --install-cert -d ${DOMAIN} \
-            --key-file       /etc/nginx/ssl/certs/${DOMAIN}_key.pem \
-            --fullchain-file /etc/nginx/ssl/certs/${DOMAIN}_cert.pem \
-            --reloadcmd     "systemctl reload nginx"
-            
-            if [ $? -ne 0 ]; then
-                log_error "证书安装失败，请检查错误信息"
-                return 1
-            fi
-            
-            # 更新Nginx配置支持HTTPS
-            log_info "配置Nginx支持HTTPS..."
-            cat > /etc/nginx/conf.d/${DOMAIN}.conf << EOF
-server {
-    listen 80;
-    server_name ${DOMAIN};
-
-    # 重定向HTTP到HTTPS
-    location / {
-        return 301 https://\$host\$request_uri;
-    }
-
-    # 用于acme.sh验证
-    location /.well-known/acme-challenge/ {
-        root /var/www/acme-challenge;
-        try_files \$uri =404;
-    }
-}
-
-server {
-    listen 443 ssl;
-    server_name ${DOMAIN};
-
-    ssl_certificate     /etc/nginx/ssl/certs/${DOMAIN}_cert.pem;
-    ssl_certificate_key /etc/nginx/ssl/certs/${DOMAIN}_key.pem;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_ciphers         HIGH:!aNULL:!MD5;
-
-    location / {
-        root   /usr/share/nginx/html;
-        index  index.html index.htm;
-    }
-}
-EOF
-            
-            # 重载Nginx配置
-            systemctl reload nginx
-            
-            log_info "证书申请和安装成功!"
-        ;;
-        0|*)
-            log_info "取消添加证书"
-        ;;
-    esac
+    
+    # 测试Nginx配置
+    if ! nginx -t; then
+        log_error "Nginx配置测试失败，请检查配置文件"
+        return 1
+    fi
+    
+    # 重载Nginx配置
+    systemctl reload nginx
+    
+    if [ $? -ne 0 ]; then
+        log_error "Nginx重载失败，请检查错误信息"
+        return 1
+    fi
+    
+    log_success "证书已成功申请并安装"
+    echo ""
+    echo -e "${GREEN}证书信息:${NC}"
+    echo "域名: $DOMAIN"
+    echo "证书文件: /etc/nginx/ssl/$DOMAIN/cert.pem"
+    echo "密钥文件: /etc/nginx/ssl/$DOMAIN/key.pem"
+    echo "Nginx配置: /etc/nginx/conf.d/${DOMAIN}.conf"
+    echo ""
+    echo "您现在可以通过 https://${DOMAIN} 访问您的网站"
+    echo "HTTP请求将自动重定向到HTTPS"
     
     # 等待用户按键继续
     echo ""
     read -n 1 -p "按任意键继续..." dummy
     echo ""
+    
     return 0
 }
 
@@ -2058,6 +2406,216 @@ renew_certificate() {
     read -n 1 -p "按任意键继续..." dummy
     echo ""
     return 0
+}
+
+# 管理acme信息
+manage_acme_info() {
+    log_info "管理acme信息"
+    
+    # 检查acme.sh是否已安装
+    if [ ! -f "/root/.acme.sh/acme.sh" ]; then
+        log_error "acme.sh未安装，请先安装acme服务"
+        return 1
+    fi
+    
+    # 显示acme管理菜单
+    show_acme_menu() {
+        echo ""
+        echo -e "${BLUE}========== acme信息管理 ==========${NC}"
+        echo -e "${GREEN}1.${NC} 查看acme账号信息"
+        echo -e "${GREEN}2.${NC} 修改acme账号邮箱"
+        echo -e "${GREEN}3.${NC} 查看DNS API配置"
+        echo -e "${GREEN}4.${NC} 修改Cloudflare API信息"
+        echo -e "${GREEN}0.${NC} 返回上级菜单"
+        echo ""
+        echo -n "请选择操作 [0-4]: "
+        read -n 1 acme_choice
+        echo ""
+        
+        case $acme_choice in
+            1)
+                # 查看acme账号信息
+                log_info "acme.sh账号信息:"
+                /root/.acme.sh/acme.sh --info
+            ;;
+            2)
+                # 修改acme账号邮箱
+                while true; do
+                    echo -n "请输入新的邮箱地址: "
+                    read NEW_EMAIL
+                    
+                    # 验证邮箱格式
+                    if [[ ! "$NEW_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+                        log_error "邮箱格式无效，请输入正确的邮箱地址"
+                        continue
+                    fi
+                    
+                    # 验证邮箱域名
+                    EMAIL_DOMAIN=$(echo "$NEW_EMAIL" | cut -d'@' -f2)
+                    if [[ "$EMAIL_DOMAIN" == "example.com" || "$EMAIL_DOMAIN" == "localhost" ]]; then
+                        log_error "不允许使用example.com或localhost作为邮箱域名"
+                        continue
+                    fi
+                    
+                    # 确认邮箱
+                    echo -n "确认使用邮箱 $NEW_EMAIL? [Y/n]: "
+                    read -n 1 confirm
+                    echo ""
+                    
+                    if [[ ! "$confirm" =~ ^[Nn]$ ]]; then
+                        break
+                    fi
+                done
+                
+                # 更新acme.sh账号
+                log_info "更新acme.sh账号..."
+                /root/.acme.sh/acme.sh --update-account --accountemail "$NEW_EMAIL"
+                
+                # 更新Cloudflare配置中的邮箱
+                if [ -f "/etc/nginx/ssl/acme-conf/cloudflare.conf" ]; then
+                    sed -i "s/export CF_Email=.*/export CF_Email=\"$NEW_EMAIL\"/" /etc/nginx/ssl/acme-conf/cloudflare.conf
+                    log_info "已更新Cloudflare配置中的邮箱"
+                fi
+                
+                log_success "acme.sh账号邮箱已更新"
+            ;;
+            3)
+                # 查看DNS API配置
+                log_info "DNS API配置状态:"
+                if [ -f "/etc/nginx/ssl/acme-conf/cloudflare.conf" ]; then
+                    echo "Cloudflare DNS API: 已配置"
+                    echo "配置内容:"
+                    cat /etc/nginx/ssl/acme-conf/cloudflare.conf
+                else
+                    echo "Cloudflare DNS API: 未配置"
+                fi
+            ;;
+            4)
+                # 修改Cloudflare API信息
+                if [ ! -f "/etc/nginx/ssl/acme-conf/cloudflare.conf" ]; then
+                    log_error "Cloudflare配置未找到，请先配置acme信息"
+                    return 1
+                fi
+                
+                # 获取当前配置
+                source /etc/nginx/ssl/acme-conf/cloudflare.conf
+                
+                echo -e "${BLUE}当前Cloudflare配置:${NC}"
+                echo "邮箱: $CF_Email"
+                echo "API令牌: ${CF_Key:0:4}...${CF_Key: -4}"
+                
+                while true; do
+                    echo -n "请输入新的Cloudflare API令牌: "
+                    read NEW_CF_TOKEN
+                    
+                    if [ -z "$NEW_CF_TOKEN" ]; then
+                        log_error "API令牌不能为空"
+                        continue
+                    fi
+                    
+                    # 验证API令牌格式
+                    if [[ ! "$NEW_CF_TOKEN" =~ ^[a-zA-Z0-9]{40}$ ]]; then
+                        log_error "API令牌格式无效，请检查是否正确"
+                        continue
+                    fi
+                    
+                    # 确认API令牌
+                    echo -n "确认使用此API令牌? [Y/n]: "
+                    read -n 1 confirm
+                    echo ""
+                    
+                    if [[ ! "$confirm" =~ ^[Nn]$ ]]; then
+                        break
+                    fi
+                done
+                
+                # 更新Cloudflare配置
+                cat > /etc/nginx/ssl/acme-conf/cloudflare.conf << EOF
+export CF_Key="$NEW_CF_TOKEN"
+export CF_Email="$CF_Email"
+EOF
+                chmod 600 /etc/nginx/ssl/acme-conf/cloudflare.conf
+                log_success "Cloudflare API信息已更新"
+            ;;
+            0)
+                return 0
+            ;;
+            *)
+                log_error "无效选项，请重新选择"
+            ;;
+        esac
+        
+        # 等待用户按键继续
+        echo ""
+        read -n 1 -p "按任意键继续..." dummy
+        echo ""
+        
+        # 返回菜单
+        show_acme_menu
+    }
+    
+    # 显示acme管理菜单
+    show_acme_menu
+    
+    return 0
+}
+
+# 查看WordPress独立站信息
+show_wordpress_info() {
+    log_step "查看WordPress独立站信息"
+    
+    # 检查WordPress目录是否存在
+    if [ ! -d "./wordpress_site" ]; then
+        log_error "未找到WordPress站点目录"
+        show_menu
+        return
+    fi
+    
+    # 检查site_info.txt文件是否存在
+    if [ ! -f "./wordpress_site/site_info.txt" ]; then
+        log_error "未找到站点信息文件"
+        show_menu
+        return
+    fi
+    
+    # 显示站点信息
+    echo -e "${BLUE}========== WordPress站点信息 ==========${NC}"
+    cat ./wordpress_site/site_info.txt
+    
+    # 检查Docker容器状态
+    echo -e "\n${BLUE}========== Docker容器状态 ==========${NC}"
+    cd ./wordpress_site
+    docker-compose ps
+    cd ..
+    
+    # 检查Nginx配置
+    echo -e "\n${BLUE}========== Nginx配置状态 ==========${NC}"
+    if [ -f "/etc/nginx/conf.d/$(grep "站点URL:" ./wordpress_site/site_info.txt | cut -d' ' -f2 | cut -d'/' -f3).conf" ]; then
+        echo "Nginx配置文件存在"
+        nginx -t
+    else
+        echo "未找到Nginx配置文件"
+    fi
+    
+    # 检查SSL证书状态
+    echo -e "\n${BLUE}========== SSL证书状态 ==========${NC}"
+    DOMAIN=$(grep "站点URL:" ./wordpress_site/site_info.txt | cut -d' ' -f2 | cut -d'/' -f3)
+    if [ -f "/etc/nginx/ssl/${DOMAIN}/cert.pem" ]; then
+        echo "SSL证书已安装"
+        echo "证书路径: /etc/nginx/ssl/${DOMAIN}/cert.pem"
+        echo "密钥路径: /etc/nginx/ssl/${DOMAIN}/key.pem"
+        echo "证书信息:"
+        openssl x509 -in "/etc/nginx/ssl/${DOMAIN}/cert.pem" -noout -dates
+    else
+        echo "未找到SSL证书"
+    fi
+    
+    # 等待用户按键继续
+    echo ""
+    read -n 1 -p "按任意键继续..." dummy
+    echo ""
+    
+    show_menu
 }
 
 # 主函数
