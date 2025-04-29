@@ -1,124 +1,100 @@
-# WordPress Docker 快速部署
+# DLZ Docker管理工具
 
-这是一个使用 Docker 快速部署 WordPress 独立站的项目，支持通过环境变量完全自定义配置。
+一个功能强大的Shell脚本，用于在Ubuntu和Debian系统上安装和管理Docker。
+
+## 功能特点
+
+- 自动检测系统类型和配置
+- 提供简单直观的交互式菜单
+- 支持Docker的安装、卸载和状态管理
+- 提供Docker系统清理功能
+- 彩色输出，提高可读性
+- 良好的错误处理和用户反馈
+- 高度模块化设计，易于扩展
 
 ## 系统要求
 
-- Docker
+- Ubuntu或Debian系统
+- root权限
+- bash shell环境
 
-## 快速开始
+## 安装方法
 
-### 1. 构建镜像
-
-```bash
-docker build -t my-wordpress .
-```
-
-### 2. 运行容器
+1. 下载脚本文件：
 
 ```bash
-# 使用自定义配置
-docker run -d \
-  -p 8080:80 \
-  -p 3306:3306 \
-  -v wordpress_data:/var/www/html \
-  -v mysql_data:/var/lib/mysql \
-  -e WORDPRESS_DB_HOST=localhost \
-  -e WORDPRESS_DB_NAME=mydb \
-  -e WORDPRESS_DB_USER=myuser \
-  -e WORDPRESS_DB_PASSWORD=mypassword \
-  -e MYSQL_ROOT_PASSWORD=myrootpassword \
-  -e WORDPRESS_ADMIN_USER=myadmin \
-  -e WORDPRESS_ADMIN_PASSWORD=admin123 \
-  -e WORDPRESS_ADMIN_EMAIL=admin@example.com \
-  -e WORDPRESS_SITE_TITLE="我的网站" \
-  my-wordpress
+wget https://raw.githubusercontent.com/yourusername/dlz/main/dlz.sh
 ```
 
-3. 访问 http://localhost:8080 使用您的 WordPress 站点
-
-## 环境变量配置
-
-### 必填配置
-- `WORDPRESS_DB_HOST`: 数据库主机地址 (默认: `localhost`)
-- `WORDPRESS_DB_NAME`: 数据库名称
-- `WORDPRESS_DB_USER`: 数据库用户名
-- `WORDPRESS_DB_PASSWORD`: 数据库密码
-- `MYSQL_ROOT_PASSWORD`: MySQL root密码
-
-### WordPress管理员配置
-- `WORDPRESS_ADMIN_USER`: 管理员用户名
-- `WORDPRESS_ADMIN_PASSWORD`: 管理员密码
-- `WORDPRESS_ADMIN_EMAIL`: 管理员邮箱
-- `WORDPRESS_SITE_TITLE`: 网站标题
-
-## 默认功能
-
-- 自动完成WordPress安装和配置
-- 默认中文语言
-- 预装主题: Twenty Twenty-Three
-
-## 数据持久化
-
-- WordPress数据: `/var/www/html` → `wordpress_data`卷
-- MySQL数据: `/var/lib/mysql` → `mysql_data`卷
-
-## 注意事项
-
-- 所有环境变量必须通过`-e`参数传入
-- 首次启动时会自动完成初始化
-- 生产环境请修改默认密码
-
-## 数据库访问
-
-- MySQL 服务监听在 3306 端口
-- 可以通过以下方式连接数据库：
-  ```bash
-  # 使用MySQL客户端连接
-  mysql -h localhost -P 3306 -u wordpress -p
-  ```
-- 数据库连接信息：
-  - 主机：localhost
-  - 端口：3306
-  - 用户名：由 WORDPRESS_DB_USER 环境变量指定
-  - 密码：由 WORDPRESS_DB_PASSWORD 环境变量指定
-  - 数据库名：由 WORDPRESS_DB_NAME 环境变量指定
-
-## 停止服务
+2. 赋予脚本执行权限：
 
 ```bash
-# 查找容器ID
-docker ps
-
-# 停止容器
-docker stop <容器ID>
-
-# 删除容器
-docker rm <容器ID>
+chmod +x dlz.sh
 ```
 
-## 配置说明
+## 使用方法
 
-- WordPress 默认运行在 8080 端口
-- 数据库配置：
-  - 数据库主机：localhost
-  - 数据库名：由 WORDPRESS_DB_NAME 环境变量指定
-  - 数据库用户：由 WORDPRESS_DB_USER 环境变量指定
-  - 数据库密码：由 WORDPRESS_DB_PASSWORD 环境变量指定
-
-## 数据持久化
-
-- WordPress 数据存储在 `wordpress_data` 卷中
-- MySQL 数据存储在 `mysql_data` 卷中
-
-## 停止服务
+使用root权限运行脚本：
 
 ```bash
-docker-compose down
+sudo ./dlz.sh
 ```
 
-## 注意事项
+脚本将自动检测您的系统类型和配置，然后显示主菜单，您可以选择以下操作：
 
-- 首次启动时会自动完成 WordPress 的安装和配置
-- 建议在生产环境中修改默认的密码
-- 如需修改端口，请编辑 docker-compose.yml 文件中的 ports 配置 
+1. 安装Docker
+2. 卸载Docker
+3. 查看Docker状态
+4. 清理Docker系统
+0. 退出
+
+## 功能说明
+
+### 1. 安装Docker
+
+选择此选项将执行完整的Docker安装流程：
+- 安装必要的依赖包
+- 添加Docker的GPG密钥
+- 设置Docker APT仓库
+- 安装Docker Engine
+- 配置Docker服务自启动
+- 将当前用户添加到docker组
+- 验证安装
+
+### 2. 卸载Docker
+
+完全卸载Docker及其组件：
+- 卸载Docker相关包
+- 删除Docker数据目录
+- 移除Docker仓库配置
+
+### 3. 查看Docker状态
+
+显示Docker的详细信息：
+- Docker版本
+- Docker服务状态
+- Docker镜像列表
+- 运行中的容器
+
+### 4. 清理Docker系统
+
+提供多种清理选项：
+- 删除所有停止的容器
+- 删除所有未使用的镜像
+- 删除所有未使用的数据卷
+- 删除所有未使用的网络
+- 一键清理所有
+
+## 扩展与定制
+
+该脚本采用模块化设计，每个功能都被封装为独立的函数，您可以根据需要轻松添加或修改功能。
+
+如果您需要添加新功能，只需创建相应的函数并在show_menu函数中添加菜单选项即可。
+
+## 许可证
+
+MIT
+
+## 贡献
+
+欢迎提交问题报告和改进建议。如需贡献代码，请提交拉取请求。 
