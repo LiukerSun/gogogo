@@ -1,100 +1,78 @@
 # DLZ Docker管理工具
 
-一个功能强大的Shell脚本，用于在Ubuntu和Debian系统上安装和管理Docker。
+一个用于Ubuntu和Debian系统的Docker管理工具，提供Docker安装、管理和WordPress部署功能。
 
 ## 功能特点
 
-- 自动检测系统类型和配置
-- 提供简单直观的交互式菜单
-- 支持Docker的安装、卸载和状态管理
-- 提供Docker系统清理功能
-- 彩色输出，提高可读性
-- 良好的错误处理和用户反馈
-- 高度模块化设计，易于扩展
+- Docker全生命周期管理
+  - 一键安装Docker
+  - Docker状态监控
+  - Docker系统清理
+  - Docker卸载
+- WordPress独立站部署
+  - 基于Docker Compose
+  - 自动配置MySQL数据库
+  - 支持自定义管理员账户
+  - 自动安装WooCommerce插件
 
 ## 系统要求
 
-- Ubuntu或Debian系统
-- root权限
-- bash shell环境
+- Ubuntu 18.04或更高版本
+- Debian 9或更高版本
+- 至少2GB内存
+- 至少20GB磁盘空间
 
-## 安装方法
+## 使用方法
 
-1. 下载脚本文件：
-
+1. 下载脚本：
 ```bash
-wget https://raw.githubusercontent.com/yourusername/dlz/main/dlz.sh
+wget https://raw.githubusercontent.com/yourusername/dlz/master/dlz.sh
 ```
 
-2. 赋予脚本执行权限：
-
+2. 添加执行权限：
 ```bash
 chmod +x dlz.sh
 ```
 
-## 使用方法
-
-使用root权限运行脚本：
-
+3. 运行脚本：
 ```bash
 sudo ./dlz.sh
 ```
 
-脚本将自动检测您的系统类型和配置，然后显示主菜单，您可以选择以下操作：
+## 菜单选项
 
 1. 安装Docker
+   - 自动检测系统环境
+   - 安装最新版Docker
+   - 配置Docker服务自启动
+
 2. 卸载Docker
+   - 完全移除Docker
+   - 清理相关配置文件
+
 3. 查看Docker状态
+   - 显示Docker版本
+   - 显示运行中的容器
+   - 显示Docker镜像列表
+
 4. 清理Docker系统
-0. 退出
+   - 删除未使用的镜像
+   - 清理停止的容器
+   - 清理未使用的数据卷
+   - 清理未使用的网络
 
-## 功能说明
+5. 安装WordPress独立站
+   - 配置MySQL数据库
+   - 安装WordPress
+   - 自动安装WooCommerce
+   - 生成站点信息文件
 
-### 1. 安装Docker
+## 注意事项
 
-选择此选项将执行完整的Docker安装流程：
-- 安装必要的依赖包
-- 添加Docker的GPG密钥
-- 设置Docker APT仓库
-- 安装Docker Engine
-- 配置Docker服务自启动
-- 将当前用户添加到docker组
-- 验证安装
-
-### 2. 卸载Docker
-
-完全卸载Docker及其组件：
-- 卸载Docker相关包
-- 删除Docker数据目录
-- 移除Docker仓库配置
-
-### 3. 查看Docker状态
-
-显示Docker的详细信息：
-- Docker版本
-- Docker服务状态
-- Docker镜像列表
-- 运行中的容器
-
-### 4. 清理Docker系统
-
-提供多种清理选项：
-- 删除所有停止的容器
-- 删除所有未使用的镜像
-- 删除所有未使用的数据卷
-- 删除所有未使用的网络
-- 一键清理所有
-
-## 扩展与定制
-
-该脚本采用模块化设计，每个功能都被封装为独立的函数，您可以根据需要轻松添加或修改功能。
-
-如果您需要添加新功能，只需创建相应的函数并在show_menu函数中添加菜单选项即可。
+- 运行脚本需要root权限
+- 安装WordPress前请确保系统有足够资源
+- 建议在干净的系统中使用
 
 ## 许可证
 
-MIT
-
-## 贡献
-
-欢迎提交问题报告和改进建议。如需贡献代码，请提交拉取请求。 
+MIT License 
