@@ -910,7 +910,7 @@ EOF
 path: /var/www/html
 url: https://${SITE_DOMAIN}
 EOF
-
+    
     # 创建WordPress配置脚本
     log_info "创建WordPress配置脚本..."
     cat > setup-wp.sh << 'EOF'
@@ -932,7 +932,7 @@ if wp core is-installed --allow-root; then
   wp option update blogname "$WP_TITLE" --allow-root || echo "更新站点标题失败"
   wp option update siteurl "https://${SITE_DOMAIN}" --allow-root || echo "更新站点URL失败"
   wp option update home "https://${SITE_DOMAIN}" --allow-root || echo "更新站点首页URL失败"
-  
+
   # 配置SSL设置
   wp config set FORCE_SSL_ADMIN true --allow-root || echo "设置强制管理员SSL失败"
   wp config set FORCE_SSL_LOGIN true --allow-root || echo "设置强制登录SSL失败"
@@ -945,7 +945,7 @@ else
     echo "WordPress安装失败"
     exit 1
   }
-  
+
   # 配置SSL设置
   wp config set FORCE_SSL_ADMIN true --allow-root || echo "设置强制管理员SSL失败"
   wp config set FORCE_SSL_LOGIN true --allow-root || echo "设置强制登录SSL失败"
@@ -1042,7 +1042,7 @@ EOF
 server {
     listen 80;
     server_name ${SITE_DOMAIN};
-    
+
     # 强制所有HTTP请求重定向到HTTPS
     location / {
         return 301 https://\$server_name\$request_uri;
@@ -1083,17 +1083,17 @@ server {
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
-        
+
         # 缓冲区设置
         proxy_buffer_size 128k;
         proxy_buffers 4 256k;
         proxy_busy_buffers_size 256k;
-        
+
         # 启用WebSocket支持
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
-        
+
         # 修复WordPress重定向问题
         proxy_redirect http://\$host:${WP_PORT}/ https://\$host/;
         proxy_redirect https://\$host:${WP_PORT}/ https://\$host/;
@@ -1371,7 +1371,7 @@ add_wordpress_certificate() {
 server {
     listen 80;
     server_name ${SITE_DOMAIN};
-    
+
     # 强制所有HTTP请求重定向到HTTPS
     location / {
         return 301 https://\$server_name\$request_uri;
@@ -1412,17 +1412,17 @@ server {
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
-        
+
         # 缓冲区设置
         proxy_buffer_size 128k;
         proxy_buffers 4 256k;
         proxy_busy_buffers_size 256k;
-        
+
         # 启用WebSocket支持
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
-        
+
         # 修复WordPress重定向问题
         proxy_redirect http://\$host:${WP_PORT}/ https://\$host/;
         proxy_redirect https://\$host:${WP_PORT}/ https://\$host/;
@@ -2156,7 +2156,7 @@ server {
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
-        
+
         # 修复重定向问题
         proxy_redirect http://\$host:${WP_PORT}/ https://\$host/;
         proxy_redirect https://\$host:${WP_PORT}/ https://\$host/;
